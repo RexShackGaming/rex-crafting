@@ -3,7 +3,7 @@ rdr3_warning 'I acknowledge that this is a prerelease build of RedM, and I am aw
 game 'rdr3'
 
 description 'rex-crafting'
-version '2.1.0'
+version '2.1.1'
 
 shared_scripts {
     '@ox_lib/init.lua',
@@ -49,7 +49,13 @@ server_exports {
   'GetCraftingRecipes',
   'GetCraftingLocations',
   'CanCraftItem',
-  'AddCustomRecipe'
+  'AddCustomRecipe',
+  -- Job-based crafting exports
+  'CheckPlayerJob',
+  'GetPlayerJob',
+  'GetRecipeJobRequirement',
+  'GetRecipesByJob',
+  'ProcessCraftingWithJobCheck'
 }
 
 lua54 'yes'

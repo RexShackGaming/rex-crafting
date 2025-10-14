@@ -2,6 +2,23 @@ local RSGCore = exports['rsg-core']:GetCoreObject()
 lib.locale()
 
 ---------------------------------------------
+-- job validation function
+---------------------------------------------
+local function CheckPlayerJobRequirement(source, requiredJob)
+    if not requiredJob then
+        return true -- No job requirement
+    end
+    
+    local Player = RSGCore.Functions.GetPlayer(source)
+    if not Player then
+        return false
+    end
+    
+    local playerJob = Player.PlayerData.job.type
+    return playerJob == requiredJob
+end
+
+---------------------------------------------
 -- increase xp function
 ---------------------------------------------
 local function IncreasePlayerXP(source, xpGain, xpType)
@@ -11,7 +28,7 @@ local function IncreasePlayerXP(source, xpGain, xpType)
     -- Use SetRep instead of AddRep to avoid double addition
     local currentXP = Player.Functions.GetRep(xpType) or 0
     local newXP = currentXP + xpGain
-    Player.Functions.SetRep(xpType, newXP)
+    Player.Functions.AddRep(xpType, newXP)
     
     TriggerClientEvent('ox_lib:notify', source, { 
         title = string.format(locale('sv_lang_3'), xpGain, xpType), 
@@ -21,6 +38,28 @@ local function IncreasePlayerXP(source, xpGain, xpType)
     
     return true
 end
+
+---------------------------------------------
+-- get player job
+---------------------------------------------
+RSGCore.Functions.CreateCallback('rex-crafting:server:getplayerjob', function(source, cb)
+    local Player = RSGCore.Functions.GetPlayer(source)
+    if not Player then 
+        cb(nil)
+        return
+    end
+    
+    local playerJob = Player.PlayerData.job.type
+    cb(playerJob)
+end)
+
+---------------------------------------------
+-- check player job permission
+---------------------------------------------
+RSGCore.Functions.CreateCallback('rex-crafting:server:checkjob', function(source, cb, requiredJob)
+    local hasPermission = CheckPlayerJobRequirement(source, requiredJob)
+    cb(hasPermission)
+end)
 
 ---------------------------------------------
 -- check player xp
@@ -39,15 +78,21 @@ end)
 ---------------------------------------------
 -- check player has the ingredients
 ---------------------------------------------
-RSGCore.Functions.CreateCallback('rex-crafting:server:checkingredients', function(source, cb, ingredients)
+RSGCore.Functions.CreateCallback('rex-crafting:server:checkingredients', function(source, cb, ingredients, requiredJob)
     local Player = RSGCore.Functions.GetPlayer(source)
     if not Player then 
-        cb({ success = false, missingItems = {} })
+        cb({ success = false, missingItems = {}, jobRestricted = false })
         return
     end
     
     if not ingredients or #ingredients == 0 then
-        cb({ success = false, missingItems = {} })
+        cb({ success = false, missingItems = {}, jobRestricted = false })
+        return
+    end
+    
+    -- Check job requirement first
+    if requiredJob and not CheckPlayerJobRequirement(source, requiredJob) then
+        cb({ success = false, missingItems = {}, jobRestricted = true, requiredJob = requiredJob })
         return
     end
     
@@ -73,9 +118,9 @@ RSGCore.Functions.CreateCallback('rex-crafting:server:checkingredients', functio
     end
     
     if #missingItems > 0 then
-        cb({ success = false, missingItems = missingItems })
+        cb({ success = false, missingItems = missingItems, jobRestricted = false })
     else
-        cb({ success = true, missingItems = {} })
+        cb({ success = true, missingItems = {}, jobRestricted = false })
     end
 end)
 
@@ -90,6 +135,18 @@ RegisterNetEvent('rex-crafting:server:finishcrafting', function(data)
     -- Validate data
     if not data or not data.ingredients or not data.receive or not data.giveamount then
         print("^1[ERROR] Invalid crafting data received from player " .. src .. "^7")
+        return
+    end
+    
+    -- Check job requirement
+    if data.requiredjob and not CheckPlayerJobRequirement(src, data.requiredjob) then
+        print("^1[WARNING] Player " .. src .. " tried to craft item requiring job '" .. data.requiredjob .. "' but doesn't have the required job^7")
+        TriggerClientEvent('ox_lib:notify', src, { 
+            title = 'Job Required', 
+            description = 'You need to be a ' .. data.requiredjob .. ' to craft this item.', 
+            type = 'error', 
+            duration = 7000 
+        })
         return
     end
     
@@ -139,8 +196,8 @@ RegisterNetEvent('rex-crafting:server:finishcrafting', function(data)
         return
     end
     
-    -- Use configured XP value instead of hardcoded 1
-    local xpGain = data.craftingxp or 1
+    -- Use configured XP reward value
+    local xpGain = data.xpreward or 1
     IncreasePlayerXP(src, xpGain, 'crafting')
     
     -- Log the crafting event
@@ -248,8 +305,8 @@ exports('ProcessCrafting', function(source, craftData)
     TriggerClientEvent('rsg-inventory:client:ItemBox', source, RSGCore.Shared.Items[craftData.receive], 'add', craftData.giveamount)
     
     -- Add XP if specified
-    if craftData.craftingxp and craftData.craftingxp > 0 then
-        IncreasePlayerXP(source, craftData.craftingxp, 'crafting')
+    if craftData.xpreward and craftData.xpreward > 0 then
+        IncreasePlayerXP(source, craftData.xpreward, 'crafting')
     end
     
     -- Log the crafting event
@@ -284,6 +341,73 @@ exports('CanCraftItem', function(itemName)
     return false, nil
 end)
 
+-- Check if player has required job for crafting
+exports('CheckPlayerJob', function(source, requiredJob)
+    return CheckPlayerJobRequirement(source, requiredJob)
+end)
+
+-- Get player's current job
+exports('GetPlayerJob', function(source)
+    local Player = RSGCore.Functions.GetPlayer(source)
+    if not Player then return nil end
+    
+    return Player.PlayerData.job.type
+end)
+
+-- Check if a recipe requires a specific job
+exports('GetRecipeJobRequirement', function(itemName)
+    for _, recipe in ipairs(Config.Crafting) do
+        if recipe.receive == itemName then
+            return recipe.requiredjob
+        end
+    end
+    
+    return nil
+end)
+
+-- Get all recipes available to a specific job
+exports('GetRecipesByJob', function(jobName)
+    local jobRecipes = {}
+    
+    for _, recipe in ipairs(Config.Crafting) do
+        -- Include recipes with no job requirement or matching job requirement
+        if not recipe.requiredjob or recipe.requiredjob == jobName then
+            table.insert(jobRecipes, recipe)
+        end
+    end
+    
+    return jobRecipes
+end)
+
+-- Enhanced ProcessCrafting with job validation
+exports('ProcessCraftingWithJobCheck', function(source, craftData)
+    -- Validate required fields
+    local requiredFields = {'ingredients', 'receive', 'giveamount'}
+    for _, field in ipairs(requiredFields) do
+        if not craftData[field] then
+            return { success = false, error = 'Missing required field: ' .. field }
+        end
+    end
+    
+    local Player = RSGCore.Functions.GetPlayer(source)
+    if not Player then
+        return { success = false, error = 'Player not found' }
+    end
+    
+    -- Check job requirement
+    if craftData.requiredjob and not CheckPlayerJobRequirement(source, craftData.requiredjob) then
+        return { 
+            success = false, 
+            error = 'Job requirement not met', 
+            requiredJob = craftData.requiredjob,
+            playerJob = Player.PlayerData.job.type
+        }
+    end
+    
+    -- Use existing ProcessCrafting logic
+    return exports['rex-crafting']:ProcessCrafting(source, craftData)
+end)
+
 -- Add custom recipe at runtime (for dynamic systems)
 exports('AddCustomRecipe', function(recipe)
     -- Validate required fields
@@ -292,6 +416,14 @@ exports('AddCustomRecipe', function(recipe)
         if not recipe[field] then
             return false, 'Missing required field: ' .. field
         end
+    end
+    
+    -- Handle backward compatibility with old craftingxp field
+    if recipe.craftingxp and not recipe.xpreward then
+        recipe.xpreward = recipe.craftingxp
+    end
+    if recipe.craftingxp and not recipe.requiredxp then
+        recipe.requiredxp = recipe.craftingxp
     end
     
     -- Check if item already has a recipe

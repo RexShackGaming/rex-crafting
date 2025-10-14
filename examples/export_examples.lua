@@ -59,7 +59,8 @@ if IsDuplicityVersion() == false then -- Client-side only
             print("^2Recipe found for " .. itemName .. ":^7")
             print("  Category: " .. recipe.category)
             print("  Craft time: " .. recipe.crafttime .. "ms")
-            print("  XP reward: " .. recipe.craftingxp)
+            print("  Required XP: " .. (recipe.requiredxp or 0))
+            print("  XP reward: " .. (recipe.xpreward or 0))
             
             local ingredients = exports['rex-crafting']:GetRecipeIngredients(itemName)
             print("  Ingredients:")
@@ -183,6 +184,140 @@ if IsDuplicityVersion() then -- Server-side only
             args = { '^3Crafting', 'Your crafting XP: ' .. xp }
         })
     end, false)
+    
+    -- JOB-BASED CRAFTING EXAMPLES
+    
+    -- Example 6: Check player's job
+    RegisterCommand('checkjob', function(source, args)
+        if source == 0 then return end
+        
+        local playerJob = exports['rex-crafting']:GetPlayerJob(source)
+        TriggerClientEvent('chat:addMessage', source, {
+            args = { '^3Job Check', 'Your current job: ' .. (playerJob or 'unemployed') }
+        })
+    end, false)
+    
+    -- Example 7: Check if player can craft specific item
+    RegisterCommand('canjob', function(source, args)
+        if source == 0 then return end
+        
+        if not args[1] then
+            TriggerClientEvent('chat:addMessage', source, {
+                args = { '^1Error', 'Usage: /canjob <item_name>' }
+            })
+            return
+        end
+        
+        local itemName = args[1]
+        local requiredJob = exports['rex-crafting']:GetRecipeJobRequirement(itemName)
+        
+        if not requiredJob then
+            TriggerClientEvent('chat:addMessage', source, {
+                args = { '^2Success', 'No job requirement for ' .. itemName }
+            })
+        else
+            local canCraft = exports['rex-crafting']:CheckPlayerJob(source, requiredJob)
+            local playerJob = exports['rex-crafting']:GetPlayerJob(source)
+            
+            if canCraft then
+                TriggerClientEvent('chat:addMessage', source, {
+                    args = { '^2Success', 'You can craft ' .. itemName .. ' (requires: ' .. requiredJob .. ')' }
+                })
+            else
+                TriggerClientEvent('chat:addMessage', source, {
+                    args = { '^1Error', 'You cannot craft ' .. itemName .. '. Required: ' .. requiredJob .. ', Your job: ' .. (playerJob or 'unemployed') }
+                })
+            end
+        end
+    end, false)
+    
+    -- Example 8: Get recipes available to player's job
+    RegisterCommand('jobrecipes', function(source, args)
+        if source == 0 then return end
+        
+        local playerJob = exports['rex-crafting']:GetPlayerJob(source)
+        local availableRecipes = exports['rex-crafting']:GetRecipesByJob(playerJob)
+        
+        TriggerClientEvent('chat:addMessage', source, {
+            args = { '^3Job Recipes', 'Available recipes for ' .. (playerJob or 'unemployed') .. ': ' .. #availableRecipes }
+        })
+        
+        for i, recipe in ipairs(availableRecipes) do
+            if i <= 5 then -- Show only first 5 to avoid spam
+                local jobText = recipe.requiredjob and ' (Job: ' .. recipe.requiredjob .. ')' or ' (No job req)'
+                TriggerClientEvent('chat:addMessage', source, {
+                    args = { '', '  - ' .. recipe.receive .. jobText }
+                })
+            end
+        end
+        
+        if #availableRecipes > 5 then
+            TriggerClientEvent('chat:addMessage', source, {
+                args = { '', '  ... and ' .. (#availableRecipes - 5) .. ' more' }
+            })
+        end
+    end, false)
+    
+    -- Example 9: Enhanced external crafting with job check
+    RegisterNetEvent('example:craft-job-restricted')
+    AddEventHandler('example:craft-job-restricted', function(itemName)
+        local source = source
+        
+        -- Check if item can be crafted
+        local canCraft, recipe = exports['rex-crafting']:CanCraftItem(itemName)
+        
+        if not canCraft then
+            TriggerClientEvent('chat:addMessage', source, {
+                args = { '^1Error', 'No recipe exists for ' .. itemName }
+            })
+            return
+        end
+        
+        -- Use the enhanced ProcessCraftingWithJobCheck export
+        local result = exports['rex-crafting']:ProcessCraftingWithJobCheck(source, recipe)
+        
+        if result.success then
+            TriggerClientEvent('chat:addMessage', source, {
+                args = { '^2Success', 'Crafted ' .. itemName .. ' successfully!' }
+            })
+        else
+            if result.error == 'Job requirement not met' then
+                TriggerClientEvent('chat:addMessage', source, {
+                    args = { '^1Job Required', 'You need to be a ' .. result.requiredJob .. ' to craft this item. Your job: ' .. (result.playerJob or 'unemployed') }
+                })
+            else
+                TriggerClientEvent('chat:addMessage', source, {
+                    args = { '^1Error', 'Crafting failed: ' .. result.error }
+                })
+            end
+        end
+    end)
+    
+    -- Example 10: Add custom job-restricted recipe
+    local function AddBlacksmithRecipe()
+        local blacksmithRecipe = {
+            category = 'Blacksmith Specials',
+            crafttime = 60000,
+            requiredxp = 150,    -- Need 150 XP to craft this advanced item
+            xpreward = 20,       -- Gain 20 XP after crafting
+            requiredjob = 'blacksmith', -- Only blacksmiths can craft this
+            ingredients = {
+                { item = 'coal', amount = 10 },
+                { item = 'steel_bar', amount = 5 }
+            },
+            receive = 'custom_blacksmith_hammer',
+            giveamount = 1
+        }
+        
+        local success, message = exports['rex-crafting']:AddCustomRecipe(blacksmithRecipe)
+        print("^3Custom blacksmith recipe result: " .. message .. "^7")
+    end
+    
+    -- Add the custom blacksmith recipe when resource starts
+    CreateThread(function()
+        Wait(5000) -- Wait for rex-crafting to fully load
+        AddBlacksmithRecipe()
+    end)
     
 end
 

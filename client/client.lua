@@ -26,7 +26,10 @@ end)
 ---------------------------------------------
 -- crafting menu
 ---------------------------------------------
-CreateThread(function()
+local function BuildCraftingMenus()
+    CategoryMenus = {} -- Reset menus
+    MenusRegistered = false -- Reset registration flag
+    
     for _, v in ipairs(Config.Crafting) do
         local IngredientsMetadata = {}
         
@@ -59,9 +62,11 @@ CreateThread(function()
                 category = v.category,
                 ingredients = v.ingredients,
                 crafttime = v.crafttime,
-                craftingxp = v.craftingxp,
+                requiredxp = v.requiredxp,
+                xpreward = v.xpreward,
                 receive = v.receive,
-                giveamount = v.giveamount
+                giveamount = v.giveamount,
+                requiredjob = v.requiredjob
             }
         }
 
@@ -79,6 +84,11 @@ CreateThread(function()
         
         ::continue::
     end
+end
+
+-- Build initial menus
+CreateThread(function()
+    BuildCraftingMenus()
 end)
 
 -- Register category events only once
@@ -102,26 +112,104 @@ CreateThread(function()
     RegisterCategoryMenus()
 end)
 
+-- Filter recipes based on player's job
+local function GetJobFilteredRecipes()
+    RSGCore.Functions.TriggerCallback('rex-crafting:server:getplayerjob', function(playerJob)
+        local filteredCategoryMenus = {}
+        
+        for _, v in ipairs(Config.Crafting) do
+            -- Skip if recipe requires a job that player doesn't have
+            if v.requiredjob and v.requiredjob ~= playerJob then
+                goto continue
+            end
+            
+            local IngredientsMetadata = {}
+            
+            -- Validate item exists before accessing
+            local receivedItem = RSGCore.Shared.Items[tostring(v.receive)]
+            if not receivedItem then
+                goto continue
+            end
+            
+            local setheader = receivedItem.label
+            local itemimg = "nui://"..Config.Image..receivedItem.image
+
+            for i, ingredient in ipairs(v.ingredients) do
+                local ingredientItem = RSGCore.Shared.Items[ingredient.item]
+                if ingredientItem then
+                    table.insert(IngredientsMetadata, { label = ingredientItem.label, value = ingredient.amount })
+                end
+            end
+
+            local option = {
+                title = setheader,
+                icon = itemimg,
+                event = 'rex-crafting:client:craftitem',
+                metadata = IngredientsMetadata,
+                args = {
+                    title = setheader,
+                    category = v.category,
+                    ingredients = v.ingredients,
+                    crafttime = v.crafttime,
+                    requiredxp = v.requiredxp,
+                    xpreward = v.xpreward,
+                    receive = v.receive,
+                    giveamount = v.giveamount,
+                    requiredjob = v.requiredjob
+                }
+            }
+
+            if not filteredCategoryMenus[v.category] then
+                filteredCategoryMenus[v.category] = {
+                    id = 'crafting_menu_' .. v.category,
+                    title = v.category,
+                    menu = 'crafting_menu',
+                    onBack = function() end,
+                    options = { option }
+                }
+            else
+                table.insert(filteredCategoryMenus[v.category].options, option)
+            end
+            
+            ::continue::
+        end
+        
+        -- Register filtered menus
+        for category, MenuData in pairs(filteredCategoryMenus) do
+            RegisterNetEvent('rex-crafting:client:' .. category)
+            AddEventHandler('rex-crafting:client:' .. category, function()
+                lib.registerContext(MenuData)
+                lib.showContext(MenuData.id)
+            end)
+        end
+        
+        -- Show main menu
+        local Menu = {
+            id = 'crafting_menu',
+            title = locale('cl_lang_3'),
+            options = {}
+        }
+
+        for category, MenuData in pairs(filteredCategoryMenus) do
+            table.insert(Menu.options, {
+                title = category,
+                event = 'rex-crafting:client:' .. category,
+                arrow = true
+            })
+        end
+
+        if #Menu.options == 0 then
+            lib.notify({ title = 'No Recipes Available', description = 'You don\'t have access to any crafting recipes.', type = 'inform', duration = 5000 })
+            return
+        end
+
+        lib.registerContext(Menu)
+        lib.showContext(Menu.id)
+    end)
+end
+
 RegisterNetEvent('rex-crafting:client:craftingmenu', function()
-    -- Ensure menus are registered before showing
-    RegisterCategoryMenus()
-    
-    local Menu = {
-        id = 'crafting_menu',
-        title = locale('cl_lang_3'),
-        options = {}
-    }
-
-    for category, MenuData in pairs(CategoryMenus) do
-        table.insert(Menu.options, {
-            title = category,
-            event = 'rex-crafting:client:' .. category,
-            arrow = true
-        })
-    end
-
-    lib.registerContext(Menu)
-    lib.showContext(Menu.id)
+    GetJobFilteredRecipes()
 end)
 
 ---------------------------------------------
@@ -129,10 +217,18 @@ end)
 ---------------------------------------------
 RegisterNetEvent('rex-crafting:client:craftitem', function(data)
     RSGCore.Functions.TriggerCallback('rex-crafting:server:checkxp', function(currentXP)
-        if currentXP >= data.craftingxp then
-            -- check crafting items
+        if currentXP >= (data.requiredxp or 0) then
+            -- check crafting items and job requirements
             RSGCore.Functions.TriggerCallback('rex-crafting:server:checkingredients', function(result)
-                if result.success == true then
+                if result.jobRestricted then
+                    lib.notify({ 
+                        title = 'Job Required', 
+                        description = 'You need to be a ' .. result.requiredJob .. ' to craft this item.', 
+                        type = 'error', 
+                        duration = 7000 
+                    })
+                    return
+                elseif result.success == true then
                     LocalPlayer.state:set("inv_busy", true, true) -- lock inventory
                     
                     -- Validate item exists before accessing
@@ -196,9 +292,15 @@ RegisterNetEvent('rex-crafting:client:craftitem', function(data)
                     
                     ShowMissingItemsNotification(result.missingItems)
                 end
-            end, data.ingredients)
+            end, data.ingredients, data.requiredjob)
         else
-            lib.notify({ title = locale('cl_lang_6'), type = 'error', duration = 7000 })
+            local requiredXP = data.requiredxp or 0
+            lib.notify({ 
+                title = 'Insufficient Experience', 
+                description = 'You need ' .. requiredXP .. ' XP to craft this item. Current XP: ' .. currentXP, 
+                type = 'error', 
+                duration = 7000 
+            })
         end
     end, 'crafting')
 end)
