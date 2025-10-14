@@ -135,7 +135,7 @@ Config.Crafting = {
     {
         category = 'Tools', -- Recipe category
         crafttime = 30000,  -- Crafting time in milliseconds
-        craftingxp = 1,     -- XP reward
+        craftingxp = 0,     -- XP required
         ingredients = {
             { item = 'coal',      amount = 1 },
             { item = 'steel_bar', amount = 1 },
