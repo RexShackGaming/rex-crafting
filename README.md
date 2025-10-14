@@ -203,8 +203,6 @@ exports['rex-crafting']:GivePlayerCraftingXP(source, 5)
 exports['rex-crafting']:AddCustomRecipe(customRecipe)
 ```
 
-**Full API documentation available in [WARP.md](WARP.md#exports-api)**
-
 ---
 
 ## 🎮 Usage
