@@ -1,5 +1,6 @@
 local RSGCore = exports['rsg-core']:GetCoreObject()
 local CategoryMenus = {}
+local MenusRegistered = false
 lib.locale()
 
 --------------------------------------
@@ -28,11 +29,24 @@ end)
 CreateThread(function()
     for _, v in ipairs(Config.Crafting) do
         local IngredientsMetadata = {}
-        local setheader = RSGCore.Shared.Items[tostring(v.receive)].label
-        local itemimg = "nui://"..Config.Image..RSGCore.Shared.Items[tostring(v.receive)].image
+        
+        -- Validate item exists before accessing
+        local receivedItem = RSGCore.Shared.Items[tostring(v.receive)]
+        if not receivedItem then
+            print("^1[ERROR] Item '" .. tostring(v.receive) .. "' not found in RSGCore.Shared.Items^7")
+            goto continue
+        end
+        
+        local setheader = receivedItem.label
+        local itemimg = "nui://"..Config.Image..receivedItem.image
 
         for i, ingredient in ipairs(v.ingredients) do
-            table.insert(IngredientsMetadata, { label = RSGCore.Shared.Items[ingredient.item].label, value = ingredient.amount })
+            local ingredientItem = RSGCore.Shared.Items[ingredient.item]
+            if ingredientItem then
+                table.insert(IngredientsMetadata, { label = ingredientItem.label, value = ingredient.amount })
+            else
+                print("^1[ERROR] Ingredient '" .. ingredient.item .. "' not found in RSGCore.Shared.Items^7")
+            end
         end
 
         local option = {
@@ -46,7 +60,6 @@ CreateThread(function()
                 ingredients = v.ingredients,
                 crafttime = v.crafttime,
                 craftingxp = v.craftingxp,
-                bpc = v.bpc,
                 receive = v.receive,
                 giveamount = v.giveamount
             }
@@ -63,10 +76,15 @@ CreateThread(function()
         else
             table.insert(CategoryMenus[v.category].options, option)
         end
+        
+        ::continue::
     end
 end)
 
-CreateThread(function()
+-- Register category events only once
+local function RegisterCategoryMenus()
+    if MenusRegistered then return end
+    
     for category, MenuData in pairs(CategoryMenus) do
         RegisterNetEvent('rex-crafting:client:' .. category)
         AddEventHandler('rex-crafting:client:' .. category, function()
@@ -74,9 +92,20 @@ CreateThread(function()
             lib.showContext(MenuData.id)
         end)
     end
+    
+    MenusRegistered = true
+end
+
+-- Register menus after they're built
+CreateThread(function()
+    Wait(100) -- Small delay to ensure CategoryMenus is populated
+    RegisterCategoryMenus()
 end)
 
 RegisterNetEvent('rex-crafting:client:craftingmenu', function()
+    -- Ensure menus are registered before showing
+    RegisterCategoryMenus()
+    
     local Menu = {
         id = 'crafting_menu',
         title = locale('cl_lang_3'),
@@ -99,38 +128,171 @@ end)
 -- craft item
 ---------------------------------------------
 RegisterNetEvent('rex-crafting:client:craftitem', function(data)
-    local hasItem = RSGCore.Functions.HasItem(data.bpc, 1)
-    if hasItem then
-        -- check crafting rep
-        RSGCore.Functions.TriggerCallback('rex-crafting:server:checkxp', function(currentXP)
-            if currentXP >= data.craftingxp then
-                -- check crafting items
-                RSGCore.Functions.TriggerCallback('rex-crafting:server:checkingredients', function(hasRequired)
-                    if hasRequired == true then
-                        LocalPlayer.state:set("inv_busy", true, true) -- lock inventory
-                        lib.progressBar({
-                            duration = tonumber(data.crafttime),
-                            position = 'bottom',
-                            useWhileDead = false,
-                            canCancel = false,
-                            disableControl = true,
-                            disable = {
-                                move = true,
-                                mouse = true,
-                            },
-                            label = locale('cl_lang_4').. RSGCore.Shared.Items[data.receive].label,
-                        })
-                        TriggerServerEvent('rex-crafting:server:finishcrafting', data)
-                        LocalPlayer.state:set("inv_busy", false, true) -- unlock inventory
-                    else
-                        lib.notify({ title = locale('cl_lang_5'), type = 'inform', duration = 7000 })
+    RSGCore.Functions.TriggerCallback('rex-crafting:server:checkxp', function(currentXP)
+        if currentXP >= data.craftingxp then
+            -- check crafting items
+            RSGCore.Functions.TriggerCallback('rex-crafting:server:checkingredients', function(result)
+                if result.success == true then
+                    LocalPlayer.state:set("inv_busy", true, true) -- lock inventory
+                    
+                    -- Validate item exists before accessing
+                    local itemData = RSGCore.Shared.Items[data.receive]
+                    if not itemData then
+                        print("^1[ERROR] Crafted item '" .. data.receive .. "' not found in RSGCore.Shared.Items^7")
+                        LocalPlayer.state:set("inv_busy", false, true)
+                        return
                     end
-                end, data.ingredients)
-            else
-                lib.notify({ title = locale('cl_lang_6'), type = 'error', duration = 7000 })
-            end
-        end, 'crafting')
-    else
-        lib.notify({ title = RSGCore.Shared.Items[data.bpc].label..locale('cl_lang_7'), type = 'error', duration = 7000 })
+                    
+                    local success = lib.progressBar({
+                        duration = tonumber(data.crafttime),
+                        position = 'bottom',
+                        useWhileDead = false,
+                        canCancel = true,
+                        disableControl = true,
+                        disable = {
+                            move = true,
+                            mouse = true,
+                        },
+                        label = locale('cl_lang_4').. itemData.label,
+                    })
+                    
+                    if success then
+                        TriggerServerEvent('rex-crafting:server:finishcrafting', data)
+                    end
+                    
+                    LocalPlayer.state:set("inv_busy", false, true) -- unlock inventory
+                else
+                    -- Show detailed missing items notification
+                    local function ShowMissingItemsNotification(missingItems)
+                        if not missingItems or #missingItems == 0 then
+                            lib.notify({ title = locale('cl_lang_5'), type = 'error', duration = 7000 })
+                            return
+                        end
+                        
+                        local missingText = locale('cl_lang_8') .. "\n"
+                        
+                        for i, missing in ipairs(missingItems) do
+                            if missing.have > 0 then
+                                -- Player has some but not enough
+                                missingText = missingText .. string.format(locale('cl_lang_9'), 
+                                    missing.missing, missing.label, missing.have, missing.need)
+                            else
+                                -- Player has none
+                                missingText = missingText .. string.format(locale('cl_lang_10'), 
+                                    missing.need, missing.label)
+                            end
+                            
+                            if i < #missingItems then
+                                missingText = missingText .. "\n"
+                            end
+                        end
+                        
+                        lib.notify({ 
+                            description = missingText, 
+                            type = 'error', 
+                            duration = 10000 -- Longer duration for detailed info
+                        })
+                    end
+                    
+                    ShowMissingItemsNotification(result.missingItems)
+                end
+            end, data.ingredients)
+        else
+            lib.notify({ title = locale('cl_lang_6'), type = 'error', duration = 7000 })
+        end
+    end, 'crafting')
+end)
+
+---------------------------------------------
+-- CLIENT EXPORTS
+---------------------------------------------
+
+-- Open crafting menu programmatically
+exports('OpenCraftingMenu', function()
+    TriggerEvent('rex-crafting:client:craftingmenu')
+end)
+
+-- Check if player is near a crafting location
+exports('IsNearCraftingLocation', function(maxDistance)
+    local playerCoords = GetEntityCoords(cache.ped)
+    local checkDistance = maxDistance or Config.DistanceSpawn
+    
+    for k, v in pairs(Config.CraftingLocations) do
+        local distance = #(playerCoords - v.coords)
+        if distance <= checkDistance then
+            return true, {
+                id = k,
+                name = v.name,
+                coords = v.coords,
+                distance = distance
+            }
+        end
     end
+    
+    return false, nil
+end)
+
+-- Get all crafting locations
+exports('GetCraftingLocations', function()
+    return Config.CraftingLocations
+end)
+
+-- Get crafting recipes by category
+exports('GetCraftingRecipes', function(category)
+    if not category then
+        return Config.Crafting
+    end
+    
+    local recipes = {}
+    for _, recipe in ipairs(Config.Crafting) do
+        if recipe.category == category then
+            table.insert(recipes, recipe)
+        end
+    end
+    
+    return recipes
+end)
+
+-- Get all available categories
+exports('GetCraftingCategories', function()
+    local categories = {}
+    local seen = {}
+    
+    for _, recipe in ipairs(Config.Crafting) do
+        if not seen[recipe.category] then
+            table.insert(categories, recipe.category)
+            seen[recipe.category] = true
+        end
+    end
+    
+    return categories
+end)
+
+-- Check if a specific recipe exists
+exports('GetRecipeByItem', function(itemName)
+    for _, recipe in ipairs(Config.Crafting) do
+        if recipe.receive == itemName then
+            return recipe
+        end
+    end
+    
+    return nil
+end)
+
+-- Get recipe ingredients with labels
+exports('GetRecipeIngredients', function(itemName)
+    local recipe = exports['rex-crafting']:GetRecipeByItem(itemName)
+    if not recipe then return nil end
+    
+    local ingredients = {}
+    for _, ingredient in ipairs(recipe.ingredients) do
+        local itemData = RSGCore.Shared.Items[ingredient.item]
+        table.insert(ingredients, {
+            item = ingredient.item,
+            amount = ingredient.amount,
+            label = itemData and itemData.label or ingredient.item
+        })
+    end
+    
+    return ingredients
 end)

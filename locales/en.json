@@ -6,7 +6,10 @@
     "cl_lang_5" : "Crafting items missing!",
     "cl_lang_6" : "Not Enough Experience",
     "cl_lang_7" : " required",
+    "cl_lang_8" : "Missing Items:",
+    "cl_lang_9" : "You need %d more %s (have %d/%d)",
+    "cl_lang_10" : "You need %d %s",
     "sv_lang_1" : "Item Crafted",
     "sv_lang_2" : ") crafted a ",
-    "sv_lang_3" : "You have gained %d XP in %s",
+    "sv_lang_3" : "You have gained %d XP in %s"
 }

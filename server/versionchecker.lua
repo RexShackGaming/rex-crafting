@@ -11,23 +11,32 @@ end
 local function CheckVersion()
     PerformHttpRequest('https://raw.githubusercontent.com/RexShackGaming/rex-versioncheckers/main/'..GetCurrentResourceName()..'/version.txt', function(err, text, headers)
         local currentVersion = GetResourceMetadata(GetCurrentResourceName(), 'version')
-
-        -- current version matched
+        
+        -- Handle HTTP errors
+        if err ~= 200 then
+            versionCheckPrint('error', 'Version check failed with HTTP error: ' .. tostring(err))
+            return
+        end
+        
+        -- Handle empty response
+        if not text or text == '' then
+            versionCheckPrint('error', 'Currently unable to run a version check - empty response.')
+            return
+        end
+        
+        -- Clean the version text (remove whitespace)
+        text = text:gsub('%s+', '')
+        currentVersion = currentVersion and currentVersion:gsub('%s+', '') or 'unknown'
+        
+        -- Current version matched
         if text == currentVersion then 
+            versionCheckPrint('success', 'Version check passed - running latest version ' .. currentVersion)
             return
         end
-
-        -- not able to check version
-        if not text then
-            versionCheckPrint('error', 'Currently unable to run a version check.')
-            return
-        end
-
-        -- current version did not match
-        if text ~= currentVersion then
-            versionCheckPrint('error', ('You are currently running an outdated version, please update to version %s'):format(text))
-        end
-    end)
+        
+        -- Current version did not match
+        versionCheckPrint('error', ('You are currently running version %s, please update to version %s'):format(currentVersion, text))
+    end, 'GET', '', { ['User-Agent'] = GetCurrentResourceName() .. '/1.0' }, { timeout = 10000 })
 end
 
 --------------------------------------------------------------------------------------------------

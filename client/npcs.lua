@@ -1,38 +1,67 @@
 local RSGCore = exports['rsg-core']:GetCoreObject()
 local spawnedPeds = {}
+local lastUpdateTime = 0
+local UPDATE_INTERVAL = Config.UpdateInterval or 1000 -- Use config value
+local activeFadeCount = 0
 
 CreateThread(function()
     while true do
-        Wait(500)
-        for k,v in pairs(Config.CraftingLocations) do
+        local currentTime = GetGameTimer()
+        if currentTime - lastUpdateTime >= UPDATE_INTERVAL then
+            lastUpdateTime = currentTime
+            for k,v in pairs(Config.CraftingLocations) do
             local playerCoords = GetEntityCoords(cache.ped)
             local distance = #(playerCoords - v.npccoords.xyz)
 
-            if distance < Config.DistanceSpawn and not spawnedPeds[k] then
-                local spawnedPed = NearPed(v.npcmodel, v.npccoords)
-                spawnedPeds[k] = { spawnedPed = spawnedPed }
-            end
-            
-            if distance >= Config.DistanceSpawn and spawnedPeds[k] then
-                if Config.FadeIn then
-                    for i = 255, 0, -51 do
-                        Wait(50)
-                        SetEntityAlpha(spawnedPeds[k].spawnedPed, i, false)
+                if distance < Config.DistanceSpawn and not spawnedPeds[k] then
+                    local spawnedPed = NearPed(v.npcmodel, v.npccoords)
+                    spawnedPeds[k] = { spawnedPed = spawnedPed }
+                end
+                
+                if distance >= Config.DistanceSpawn and spawnedPeds[k] then
+                    if Config.FadeIn and activeFadeCount < (Config.MaxConcurrentFades or 5) then
+                        activeFadeCount = activeFadeCount + 1
+                        CreateThread(function() -- Non-blocking fade out
+                            local pedToFade = spawnedPeds[k].spawnedPed
+                            for i = 255, 0, -51 do
+                                Wait(50)
+                                if DoesEntityExist(pedToFade) then
+                                    SetEntityAlpha(pedToFade, i, false)
+                                end
+                            end
+                            if DoesEntityExist(pedToFade) then
+                                DeletePed(pedToFade)
+                            end
+                            spawnedPeds[k] = nil
+                            activeFadeCount = math.max(0, activeFadeCount - 1)
+                        end)
+                    else
+                        if DoesEntityExist(spawnedPeds[k].spawnedPed) then
+                            DeletePed(spawnedPeds[k].spawnedPed)
+                        end
+                        spawnedPeds[k] = nil
                     end
                 end
-                DeletePed(spawnedPeds[k].spawnedPed)
-                spawnedPeds[k] = nil
             end
         end
-    end
+        Wait(200) -- Shorter wait for responsiveness
+	end
 end)
 
 function NearPed(npcmodel, npccoords)
     RequestModel(npcmodel)
+    local timeout = GetGameTimer() + (Config.ModelTimeout or 5000) -- Use config timeout
     while not HasModelLoaded(npcmodel) do
+        if GetGameTimer() > timeout then
+            print("^1[ERROR] Failed to load NPC model: " .. npcmodel .. "^7")
+            return nil
+        end
         Wait(50)
     end
-    spawnedPed = CreatePed(npcmodel, npccoords.x, npccoords.y, npccoords.z - 1.0, npccoords.w, false, false, 0, 0)
+    
+    local spawnedPed = CreatePed(npcmodel, npccoords.x, npccoords.y, npccoords.z - 1.0, npccoords.w, false, false, 0, 0)
+    if not spawnedPed then return nil end
+    
     SetEntityAlpha(spawnedPed, 0, false)
     SetRandomOutfitVariation(spawnedPed, true)
     SetEntityCanBeDamaged(spawnedPed, false)
@@ -41,13 +70,22 @@ function NearPed(npcmodel, npccoords)
     SetBlockingOfNonTemporaryEvents(spawnedPed, true)
     SetPedCanBeTargetted(spawnedPed, false)
     SetPedFleeAttributes(spawnedPed, 0, false)
-    if Config.FadeIn then
-        for i = 0, 255, 51 do
-            Wait(50)
-            SetEntityAlpha(spawnedPed, i, false)
-        end
+    
+    if Config.FadeIn and activeFadeCount < (Config.MaxConcurrentFades or 5) then
+        activeFadeCount = activeFadeCount + 1
+        CreateThread(function() -- Non-blocking fade in
+            for i = 0, 255, 51 do
+                if DoesEntityExist(spawnedPed) then
+                    SetEntityAlpha(spawnedPed, i, false)
+                end
+                Wait(50)
+            end
+            activeFadeCount = math.max(0, activeFadeCount - 1)
+        end)
+    else
+        SetEntityAlpha(spawnedPed, 255, false)
     end
-    if Config.EnableTarget then
+    if Config.EnableTarget and spawnedPed then
         exports.ox_target:addLocalEntity(spawnedPed, {
             {
                 name = 'npc_crafting',
@@ -60,6 +98,8 @@ function NearPed(npcmodel, npccoords)
             }
         })
     end
+    
+    SetModelAsNoLongerNeeded(npcmodel) -- Free model memory
     return spawnedPed
 end
 
@@ -69,7 +109,9 @@ end
 AddEventHandler("onResourceStop", function(resourceName)
     if GetCurrentResourceName() ~= resourceName then return end
     for k,v in pairs(spawnedPeds) do
-        DeletePed(spawnedPeds[k].spawnedPed)
-        spawnedPeds[k] = nil
+        if v.spawnedPed and DoesEntityExist(v.spawnedPed) then
+            DeletePed(v.spawnedPed)
+        end
     end
+    spawnedPeds = {}
 end)

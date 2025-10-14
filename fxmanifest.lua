@@ -3,11 +3,11 @@ rdr3_warning 'I acknowledge that this is a prerelease build of RedM, and I am aw
 game 'rdr3'
 
 description 'rex-crafting'
-version '2.0.7'
+version '2.1.0'
 
 shared_scripts {
     '@ox_lib/init.lua',
-    'config.lua',
+    'shared/config.lua'
 }
 
 client_scripts {
@@ -27,6 +27,29 @@ dependencies {
 
 files {
   'locales/*.json'
+}
+
+exports {
+  -- Client exports
+  'OpenCraftingMenu',
+  'IsNearCraftingLocation',
+  'GetCraftingLocations',
+  'GetCraftingRecipes',
+  'GetCraftingCategories',
+  'GetRecipeByItem',
+  'GetRecipeIngredients'
+}
+
+server_exports {
+  -- Server exports
+  'CheckPlayerIngredients',
+  'GetPlayerCraftingXP',
+  'GivePlayerCraftingXP',
+  'ProcessCrafting',
+  'GetCraftingRecipes',
+  'GetCraftingLocations',
+  'CanCraftItem',
+  'AddCustomRecipe'
 }
 
 lua54 'yes'

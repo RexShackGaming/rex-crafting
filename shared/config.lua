@@ -14,6 +14,13 @@ Config.DistanceSpawn = 20.0
 Config.FadeIn = true
 
 ---------------------------------
+-- optimization settings
+---------------------------------
+Config.UpdateInterval = 1000  -- NPC distance check interval (ms)
+Config.ModelTimeout = 5000    -- Model loading timeout (ms)
+Config.MaxConcurrentFades = 5 -- Maximum simultaneous fade animations
+
+---------------------------------
 -- npc locations
 ---------------------------------
 Config.CraftingLocations = {
@@ -93,12 +100,11 @@ Config.Crafting = {
     {
         category = 'Tools',
         crafttime = 30000,
-        craftingxp = 1,
-        bpc = 'bpc_pickaxe',
-        ingredients = { 
-            [1] = { item = 'coal',      amount = 1 },
-            [2] = { item = 'steel_bar', amount = 1 },
-            [3] = { item = 'wood',      amount = 1 },
+        craftingxp = 0,
+        ingredients = {
+            { item = 'coal',      amount = 1 },
+            { item = 'steel_bar', amount = 1 },
+            { item = 'wood',      amount = 1 },
         },
         receive = 'pickaxe',
         giveamount = 1

@@ -2,16 +2,24 @@ local RSGCore = exports['rsg-core']:GetCoreObject()
 lib.locale()
 
 ---------------------------------------------
--- increase xp fuction
+-- increase xp function
 ---------------------------------------------
 local function IncreasePlayerXP(source, xpGain, xpType)
     local Player = RSGCore.Functions.GetPlayer(source)
-    if Player then
-        local currentXP = Player.Functions.GetRep(xpType)
-        local newXP = currentXP + xpGain
-        Player.Functions.AddRep(xpType, newXP)
-        TriggerClientEvent('ox_lib:notify', source, { title = string.format(locale('sv_lang_3'), xpGain, xpType), type = 'inform', duration = 7000 })
-    end
+    if not Player then return false end
+    
+    -- Use SetRep instead of AddRep to avoid double addition
+    local currentXP = Player.Functions.GetRep(xpType) or 0
+    local newXP = currentXP + xpGain
+    Player.Functions.SetRep(xpType, newXP)
+    
+    TriggerClientEvent('ox_lib:notify', source, { 
+        title = string.format(locale('sv_lang_3'), xpGain, xpType), 
+        type = 'inform', 
+        duration = 7000 
+    })
+    
+    return true
 end
 
 ---------------------------------------------
@@ -19,30 +27,55 @@ end
 ---------------------------------------------
 RSGCore.Functions.CreateCallback('rex-crafting:server:checkxp', function(source, cb, xptype)
     local Player = RSGCore.Functions.GetPlayer(source)
-    if Player then
-        local currentXP = Player.Functions.GetRep(xptype)
-        cb(currentXP)
+    if not Player then 
+        cb(0)
+        return
     end
+    
+    local currentXP = Player.Functions.GetRep(xptype) or 0
+    cb(currentXP)
 end)
 
 ---------------------------------------------
 -- check player has the ingredients
 ---------------------------------------------
 RSGCore.Functions.CreateCallback('rex-crafting:server:checkingredients', function(source, cb, ingredients)
-    local src = source
-    local hasItems = false
-    local icheck = 0
-    local Player = RSGCore.Functions.GetPlayer(src)
-    if not Player then return end
-    for k, v in pairs(ingredients) do
-        if exports['rsg-inventory']:GetItemCount(src, v.item) >= v.amount then
-            icheck = icheck + 1
-            if icheck == #ingredients then
-                cb(true)
-            end
-        else
-            cb(false)
+    local Player = RSGCore.Functions.GetPlayer(source)
+    if not Player then 
+        cb({ success = false, missingItems = {} })
+        return
+    end
+    
+    if not ingredients or #ingredients == 0 then
+        cb({ success = false, missingItems = {} })
+        return
+    end
+    
+    local missingItems = {}
+    
+    -- Check all ingredients and collect missing items info
+    for _, ingredient in ipairs(ingredients) do
+        local itemCount = exports['rsg-inventory']:GetItemCount(source, ingredient.item)
+        local needed = ingredient.amount
+        
+        if itemCount < needed then
+            local itemData = RSGCore.Shared.Items[ingredient.item]
+            local itemLabel = itemData and itemData.label or ingredient.item
+            
+            table.insert(missingItems, {
+                item = ingredient.item,
+                label = itemLabel,
+                have = itemCount,
+                need = needed,
+                missing = needed - itemCount
+            })
         end
+    end
+    
+    if #missingItems > 0 then
+        cb({ success = false, missingItems = missingItems })
+    else
+        cb({ success = true, missingItems = {} })
     end
 end)
 
@@ -53,19 +86,221 @@ RegisterNetEvent('rex-crafting:server:finishcrafting', function(data)
     local src = source
     local Player = RSGCore.Functions.GetPlayer(src)
     if not Player then return end
+    
+    -- Validate data
+    if not data or not data.ingredients or not data.receive or not data.giveamount then
+        print("^1[ERROR] Invalid crafting data received from player " .. src .. "^7")
+        return
+    end
+    
+    -- Double-check ingredients before processing (using same logic as callback)
+    local missingItems = {}
+    for _, ingredient in ipairs(data.ingredients) do
+        local itemCount = exports['rsg-inventory']:GetItemCount(src, ingredient.item)
+        if itemCount < ingredient.amount then
+            local itemData = RSGCore.Shared.Items[ingredient.item]
+            local itemLabel = itemData and itemData.label or ingredient.item
+            table.insert(missingItems, { item = ingredient.item, label = itemLabel })
+        end
+    end
+    
+    if #missingItems > 0 then
+        local itemNames = {}
+        for _, missing in ipairs(missingItems) do
+            table.insert(itemNames, missing.label)
+        end
+        print("^1[WARNING] Player " .. src .. " tried to craft without sufficient items: " .. table.concat(itemNames, ", ") .. "^7")
+        return
+    end
+
     local citizenid = Player.PlayerData.citizenid
     local firstname = Player.PlayerData.charinfo.firstname
     local lastname = Player.PlayerData.charinfo.lastname
     local receive = data.receive
     local giveamount = data.giveamount
-    for k, v in pairs(data.ingredients) do
-        Player.Functions.RemoveItem(v.item, v.amount)
-        TriggerClientEvent('rsg-inventory:client:ItemBox', src, RSGCore.Shared.Items[v.item], 'remove', v.amount)
+    
+    -- Remove ingredients
+    for _, ingredient in ipairs(data.ingredients) do
+        local success = Player.Functions.RemoveItem(ingredient.item, ingredient.amount)
+        if success then
+            TriggerClientEvent('rsg-inventory:client:ItemBox', src, RSGCore.Shared.Items[ingredient.item], 'remove', ingredient.amount)
+        else
+            print("^1[ERROR] Failed to remove ingredient " .. ingredient.item .. " from player " .. src .. "^7")
+            return
+        end
     end
-    Player.Functions.AddItem(receive, giveamount)
-    Player.Functions.RemoveItem(data.bpc, 1)
-    TriggerClientEvent('rsg-inventory:client:ItemBox', src, RSGCore.Shared.Items[data.bpc], 'remove', 1)
-    TriggerClientEvent('rsg-inventory:client:ItemBox', src, RSGCore.Shared.Items[receive], 'add', giveamount)
-    IncreasePlayerXP(src, 1, 'crafting')
-    TriggerEvent('rsg-log:server:CreateLog', 'crafting', locale('sv_lang_1'), 'green', firstname..' '..lastname..' ('..citizenid..locale('sv_lang_2')..RSGCore.Shared.Items[receive].label)
+    
+    -- Add crafted item
+    local itemAdded = Player.Functions.AddItem(receive, giveamount)
+    if itemAdded then
+        TriggerClientEvent('rsg-inventory:client:ItemBox', src, RSGCore.Shared.Items[receive], 'add', giveamount)
+    else
+        print("^1[ERROR] Failed to add crafted item " .. receive .. " to player " .. src .. "^7")
+        return
+    end
+    
+    -- Use configured XP value instead of hardcoded 1
+    local xpGain = data.craftingxp or 1
+    IncreasePlayerXP(src, xpGain, 'crafting')
+    
+    -- Log the crafting event
+    TriggerEvent('rsg-log:server:CreateLog', 'crafting', locale('sv_lang_1'), 'green', 
+        firstname..' '..lastname..' ('..citizenid..locale('sv_lang_2')..RSGCore.Shared.Items[receive].label)
+end)
+
+---------------------------------------------
+-- SERVER EXPORTS
+---------------------------------------------
+
+-- Check if player has required ingredients for a recipe
+exports('CheckPlayerIngredients', function(source, ingredients)
+    local Player = RSGCore.Functions.GetPlayer(source)
+    if not Player then 
+        return { success = false, missingItems = {} }
+    end
+    
+    if not ingredients or #ingredients == 0 then
+        return { success = false, missingItems = {} }
+    end
+    
+    local missingItems = {}
+    
+    for _, ingredient in ipairs(ingredients) do
+        local itemCount = exports['rsg-inventory']:GetItemCount(source, ingredient.item)
+        local needed = ingredient.amount
+        
+        if itemCount < needed then
+            local itemData = RSGCore.Shared.Items[ingredient.item]
+            local itemLabel = itemData and itemData.label or ingredient.item
+            
+            table.insert(missingItems, {
+                item = ingredient.item,
+                label = itemLabel,
+                have = itemCount,
+                need = needed,
+                missing = needed - itemCount
+            })
+        end
+    end
+    
+    if #missingItems > 0 then
+        return { success = false, missingItems = missingItems }
+    else
+        return { success = true, missingItems = {} }
+    end
+end)
+
+-- Get player's crafting XP
+exports('GetPlayerCraftingXP', function(source, xpType)
+    local Player = RSGCore.Functions.GetPlayer(source)
+    if not Player then return 0 end
+    
+    xpType = xpType or 'crafting'
+    return Player.Functions.GetRep(xpType) or 0
+end)
+
+-- Add XP to player (for external crafting systems)
+exports('GivePlayerCraftingXP', function(source, xpGain, xpType)
+    xpType = xpType or 'crafting'
+    return IncreasePlayerXP(source, xpGain, xpType)
+end)
+
+-- Process crafting for external systems
+exports('ProcessCrafting', function(source, craftData)
+    -- Validate required fields
+    local requiredFields = {'ingredients', 'receive', 'giveamount'}
+    for _, field in ipairs(requiredFields) do
+        if not craftData[field] then
+            return { success = false, error = 'Missing required field: ' .. field }
+        end
+    end
+    
+    local Player = RSGCore.Functions.GetPlayer(source)
+    if not Player then
+        return { success = false, error = 'Player not found' }
+    end
+    
+    -- Check ingredients
+    local ingredientCheck = exports['rex-crafting']:CheckPlayerIngredients(source, craftData.ingredients)
+    if not ingredientCheck.success then
+        return { success = false, error = 'Missing ingredients', missingItems = ingredientCheck.missingItems }
+    end
+    
+    -- Remove ingredients
+    for _, ingredient in ipairs(craftData.ingredients) do
+        local success = Player.Functions.RemoveItem(ingredient.item, ingredient.amount)
+        if not success then
+            return { success = false, error = 'Failed to remove ingredient: ' .. ingredient.item }
+        end
+        TriggerClientEvent('rsg-inventory:client:ItemBox', source, RSGCore.Shared.Items[ingredient.item], 'remove', ingredient.amount)
+    end
+    
+    -- Add crafted item
+    local itemAdded = Player.Functions.AddItem(craftData.receive, craftData.giveamount)
+    if not itemAdded then
+        -- Try to restore ingredients on failure
+        for _, ingredient in ipairs(craftData.ingredients) do
+            Player.Functions.AddItem(ingredient.item, ingredient.amount)
+        end
+        return { success = false, error = 'Failed to add crafted item' }
+    end
+    
+    TriggerClientEvent('rsg-inventory:client:ItemBox', source, RSGCore.Shared.Items[craftData.receive], 'add', craftData.giveamount)
+    
+    -- Add XP if specified
+    if craftData.craftingxp and craftData.craftingxp > 0 then
+        IncreasePlayerXP(source, craftData.craftingxp, 'crafting')
+    end
+    
+    -- Log the crafting event
+    local citizenid = Player.PlayerData.citizenid
+    local firstname = Player.PlayerData.charinfo.firstname
+    local lastname = Player.PlayerData.charinfo.lastname
+    
+    TriggerEvent('rsg-log:server:CreateLog', 'crafting', 'External Crafting', 'blue', 
+        firstname..' '..lastname..' ('..citizenid..') crafted '..craftData.giveamount..'x '..RSGCore.Shared.Items[craftData.receive].label)
+    
+    return { success = true }
+end)
+
+-- Get all crafting recipes (server-side access)
+exports('GetCraftingRecipes', function()
+    return Config.Crafting
+end)
+
+-- Get crafting locations (server-side access)
+exports('GetCraftingLocations', function()
+    return Config.CraftingLocations
+end)
+
+-- Check if an item can be crafted
+exports('CanCraftItem', function(itemName)
+    for _, recipe in ipairs(Config.Crafting) do
+        if recipe.receive == itemName then
+            return true, recipe
+        end
+    end
+    
+    return false, nil
+end)
+
+-- Add custom recipe at runtime (for dynamic systems)
+exports('AddCustomRecipe', function(recipe)
+    -- Validate required fields
+    local requiredFields = {'category', 'crafttime', 'ingredients', 'receive', 'giveamount'}
+    for _, field in ipairs(requiredFields) do
+        if not recipe[field] then
+            return false, 'Missing required field: ' .. field
+        end
+    end
+    
+    -- Check if item already has a recipe
+    for _, existingRecipe in ipairs(Config.Crafting) do
+        if existingRecipe.receive == recipe.receive then
+            return false, 'Recipe already exists for item: ' .. recipe.receive
+        end
+    end
+    
+    table.insert(Config.Crafting, recipe)
+    return true, 'Recipe added successfully'
 end)
