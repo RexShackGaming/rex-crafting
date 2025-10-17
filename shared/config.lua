@@ -119,7 +119,7 @@ Config.Crafting = {
         crafttime = 45000,
         requiredxp = 0,     -- Need 0 XP to craft this
         xpreward = 5,       -- Gain 5 XP after crafting
-        requiredjob = 'blacksmith', -- Only blacksmiths can craft this
+        requiredjob = 'blacksmith', -- Only jobtype blacksmith can craft this
         ingredients = {
             { item = 'coal',      amount = 1 },
             { item = 'steel_bar', amount = 1 },
