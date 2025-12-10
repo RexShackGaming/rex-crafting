@@ -66,7 +66,7 @@ local function BuildCraftingMenus()
                 xpreward = v.xpreward,
                 receive = v.receive,
                 giveamount = v.giveamount,
-                requiredjob = v.requiredjob
+                jobtype = v.jobtype
             }
         }
 
@@ -119,7 +119,7 @@ local function GetJobFilteredRecipes()
         
         for _, v in ipairs(Config.Crafting) do
             -- Skip if recipe requires a job that player doesn't have
-            if v.requiredjob and v.requiredjob ~= playerJob then
+            if v.jobtype and v.jobtype ~= playerJob then
                 goto continue
             end
             
@@ -155,7 +155,7 @@ local function GetJobFilteredRecipes()
                     xpreward = v.xpreward,
                     receive = v.receive,
                     giveamount = v.giveamount,
-                    requiredjob = v.requiredjob
+                    jobtype = v.jobtype
                 }
             }
 

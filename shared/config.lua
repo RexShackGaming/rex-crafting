@@ -100,9 +100,9 @@ Config.Crafting = {
     {
         category = 'Tools',
         crafttime = 30000,
-        requiredxp = 0,      -- XP required to craft this item
-        xpreward = 5,        -- XP gained after successful crafting
-        requiredjob = nil,   -- nil means no job restriction (anyone can craft)
+        requiredxp = 0, -- XP required to craft this item
+        xpreward = 5,   -- XP gained after successful crafting
+        jobtype = nil,  -- nil means no job restriction (anyone can craft)
         ingredients = {
             { item = 'coal',      amount = 1 },
             { item = 'steel_bar', amount = 1 },
@@ -117,9 +117,9 @@ Config.Crafting = {
     {
         category = 'Blacksmith',
         crafttime = 45000,
-        requiredxp = 0,     -- Need 0 XP to craft this
-        xpreward = 5,       -- Gain 5 XP after crafting
-        requiredjob = 'blacksmith', -- Only jobtype blacksmith can craft this
+        requiredxp = 0,         -- Need 0 XP to craft this
+        xpreward = 5,           -- Gain 5 XP after crafting
+        jobtype = 'blacksmith', -- Only jobtype blacksmith can craft this
         ingredients = {
             { item = 'coal',      amount = 1 },
             { item = 'steel_bar', amount = 1 },
